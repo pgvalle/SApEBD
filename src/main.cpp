@@ -13,8 +13,8 @@
 #define LED   13
 
 // Your WiFi credentials
-#define SSID "Mefibosete24"
-#define PASS "papito12345"
+#define SSID "SSID"
+#define PASS "pass"
 
 enum TimeStatus {
   TIME_OK, TIME_IMPRECISE, TIME_WRONG
