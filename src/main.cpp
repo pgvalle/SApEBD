@@ -3,13 +3,12 @@
 
 #include <WiFiEsp.h>
 #include <TimeLib.h>  // Time by Michael Margolis
-#define dtNBR_ALARMS 32
 #include <TimeAlarms.h>  // TimeAlarms by Michael Margolis
 
-#define DELAY_INTERVAL 50  // milliseconds
+#define DELAY_INTERVAL 10  // milliseconds
 
 #define RING_DURATION 5  // seconds
-#define RELAY 12  // TODO: change pin when installing relay
+#define RELAY 8
 #define LED   13
 
 // Your WiFi credentials
@@ -24,14 +23,13 @@ enum TimeStatus {
 
 SoftwareSerial espSerial(10, 11);  // RX, TX
 bool alarmRinging = false;
-TimeStatus timeStatus = TIME_WRONG;
+TimeStatus t1meStatus = TIME_WRONG;
 bool ledOn = false;
-bool ledTicks = 0;
+int ledTicks = 0;
 
 // FUNCTIONS //
 
 void alarmRing();
-void alarmStopRinging();
 void timeShowStatus();
 time_t timeSync();
 
@@ -43,6 +41,7 @@ void setup() {
   // setup pins
   pinMode(LED, OUTPUT);
   pinMode(RELAY, OUTPUT);
+  pinMode(RELAY, alarmRinging);
 
   // Initialize the WiFiEsp library with the software serial
   espSerial.begin(9600);
@@ -54,40 +53,33 @@ void setup() {
 
   Alarm.alarmRepeat(dowSunday, 9, 0, 0, alarmRing);  // EBD início
   Alarm.alarmRepeat(dowSunday, 11, 0, 0, alarmRing);  // EBD final
-  Alarm.alarmRepeat(dowSunday, 11, 10, 0, alarmRing);  // Domingo manhã
-  Alarm.alarmRepeat(dowSunday, 18, 30, 0, alarmRing);  // Domingo noite
-  Alarm.alarmRepeat(dowWednesday, 19, 30, 0, alarmRing);  // Quarta
+  //Alarm.alarmRepeat(dowSunday, 11, 10, 0, alarmRing);  // Domingo manhã
+  //Alarm.alarmRepeat(dowSunday, 18, 30, 0, alarmRing);  // Domingo noite
+  //Alarm.alarmRepeat(dowWednesday, 19, 30, 0, alarmRing);  // Quarta
 
-  alarmStopRinging();
+  Alarm.alarmRepeat(dowFriday, 16, 12, 0, alarmRing);
 }
 
 void loop() {
   timeShowStatus();
-
   Alarm.delay(DELAY_INTERVAL);
 }
 
 // FUNCTIONS DEFINITIONS //
 
 void alarmRing() {
+  digitalWrite(RELAY, true);
   alarmRinging = true;
-  digitalWrite(RELAY, alarmRinging);
 
-  Serial.println("Ringing");
-
-  Alarm.timerOnce(RING_DURATION, alarmStopRinging);
-}
-
-void alarmStopRinging() {
-  alarmRinging = false;
-  digitalWrite(RELAY, alarmRinging);
-
-  Serial.println("Not ringing");
+  Alarm.timerOnce(RING_DURATION, []() {
+    digitalWrite(RELAY, false);
+    alarmRinging = false;
+  });
 }
 
 void timeShowStatus() {
   int ticks2wait;
-  switch (timeStatus) {
+  switch (t1meStatus) {
     case TIME_OK:
       digitalWrite(LED, HIGH);
       return;
@@ -113,18 +105,18 @@ time_t timeSync() {
 
   if (WiFi.status() != WL_CONNECTED) WiFi.begin(SSID, PASS);  // try once
   if (WiFi.status() != WL_CONNECTED) {
-    if (timeStatus == TIME_OK) timeStatus = TIME_IMPRECISE;
-    else if (precisionLoss >=  7) timeStatus = TIME_WRONG;
-    else if (timeStatus == TIME_IMPRECISE) precisionLoss++;
+    if (t1meStatus == TIME_OK) t1meStatus = TIME_IMPRECISE;
+    else if (precisionLoss >=  7) t1meStatus = TIME_WRONG;
+    else if (t1meStatus == TIME_IMPRECISE) precisionLoss++;
     return now();
   }
 
   WiFiEspClient client;
   client.connect("worldtimeapi.org", 80);
   if (!client.connected()) {
-    if (timeStatus == TIME_OK) timeStatus = TIME_IMPRECISE;
-    else if (precisionLoss >=  7) timeStatus = TIME_WRONG;
-    else if (timeStatus == TIME_IMPRECISE) precisionLoss++;
+    if (t1meStatus == TIME_OK) t1meStatus = TIME_IMPRECISE;
+    else if (precisionLoss >=  7) t1meStatus = TIME_WRONG;
+    else if (t1meStatus == TIME_IMPRECISE) precisionLoss++;
     return now();
   }
 
@@ -134,16 +126,14 @@ time_t timeSync() {
   client.println();
 
   // ignore everything before the value we care about
-  client.find("unixtime\":");
+  client.find((char *)"unixtime\":");
 
   String unixTimeStr = client.readStringUntil(',');
-  const time_t unixTime = unixTimeStr.toInt() - 10795;
-
-  Serial.println(unixTime);
+  const time_t unixTime = unixTimeStr.toInt() - 10800;
 
   client.stop();
 
-  timeStatus = TIME_OK;
+  t1meStatus = TIME_OK;
   precisionLoss = 0;
 
   return unixTime;
