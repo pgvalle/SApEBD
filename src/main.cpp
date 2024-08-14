@@ -12,8 +12,8 @@
 #define LED   13
 
 // Your WiFi credentials
-#define SSID "SSID"
-#define PASS "pass"
+#define SSID "IBS"
+#define PASS "cristovida1234"
 
 enum TimeStatus {
   TIME_OK, TIME_IMPRECISE, TIME_WRONG
@@ -41,7 +41,7 @@ void setup() {
   // setup pins
   pinMode(LED, OUTPUT);
   pinMode(RELAY, OUTPUT);
-  pinMode(RELAY, alarmRinging);
+  digitalWrite(RELAY, alarmRinging);
 
   // Initialize the WiFiEsp library with the software serial
   espSerial.begin(9600);
@@ -53,11 +53,11 @@ void setup() {
 
   Alarm.alarmRepeat(dowSunday, 9, 0, 0, alarmRing);  // EBD início
   Alarm.alarmRepeat(dowSunday, 11, 0, 0, alarmRing);  // EBD final
-  //Alarm.alarmRepeat(dowSunday, 11, 10, 0, alarmRing);  // Domingo manhã
-  //Alarm.alarmRepeat(dowSunday, 18, 30, 0, alarmRing);  // Domingo noite
-  //Alarm.alarmRepeat(dowWednesday, 19, 30, 0, alarmRing);  // Quarta
+  Alarm.alarmRepeat(dowSunday, 11, 10, 0, alarmRing);  // Domingo manhã
+  Alarm.alarmRepeat(dowSunday, 18, 30, 0, alarmRing);  // Domingo noite
+  Alarm.alarmRepeat(dowWednesday, 19, 30, 0, alarmRing);  // Quarta
 
-  Alarm.alarmRepeat(dowFriday, 16, 12, 0, alarmRing);
+  // Alarm.alarmRepeat(dowSunday, 8, 23, 30, alarmRing);  // test
 }
 
 void loop() {
