@@ -1,155 +1,142 @@
-#include <Arduino.h>
-#include <SoftwareSerial.h>
+// for storing wifi connection data
+#include <ESP_EEPROM.h>
+// wifi stuff
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
+// webpage
+#include <ESP8266WebServer.h>
+// ntp client
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 
-#include <WiFiEsp.h>
-#include <TimeLib.h>  // Time by Michael Margolis
-#include <TimeAlarms.h>  // TimeAlarms by Michael Margolis
+#define HOSTNAME "sinal"
+#define RELAY 2
+#define LED   3
+#define UPDATE_INTERVAL 250
+#define RECONNECTION_TIMEOUT 300000  // 5 min
 
-#define DELAY_INTERVAL 500  // milliseconds
-#define SYNC_INTERVAL 1440
+bool triedReconnection = false;
+uint64_t timeLastReconnection = 0;
+// esp wifi connection config
+char ssid[17] = "ssid", pass[17] = "pass";
+// time sync
+WiFiUDP ntpUDP;
+NTPClient ntpClient(ntpUDP);
+// web server
+ESP8266WebServer webServer(80);
 
-#define RING_DURATION 5  // seconds
-#define RELAY 8
-#define LED   13
+bool saveWiFiConf();
+void loadWiFiConf();
+void tryConnecting2WiFi();
+// server
+void setupServices();
+void handleMainPage();
+void handlePageNotFound();
 
-// Your WiFi credentials
-#define SSID "ssid"
-#define PASS "pass"
 
-enum TimeStatus {
-  TIME_OK, TIME_IMPRECISE, TIME_WRONG
-};
-
-// STATE VARIABLES //
-
-SoftwareSerial espSerial(10, 11);  // RX, TX
-TimeStatus t1meStatus = TIME_WRONG;
-int precisionLoss = 0;
-time_t unixTime = 0;
-
-// FUNCTIONS //
-
-void ringAlarm();
-void showTimeStatus();
-time_t syncTime();
-
-// ENTRY POINT //
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
 
-  // setup pins
-  pinMode(LED, OUTPUT);
-  pinMode(RELAY, OUTPUT);
-  digitalWrite(RELAY, false);
+  const size_t memSize = sizeof(ssid) + sizeof(pass) - 2;
+  //EEPROM.begin(memSize);
 
-  // Initialize the WiFiEsp library with the software serial
-  espSerial.begin(9600);
-  WiFi.init(&espSerial);
+  //loadWiFiConf();
+  tryConnecting2WiFi();
+  setupServices();
 
-  // configure TimeLib with rtc
-  setTime(0);
-  setSyncInterval(SYNC_INTERVAL);  // sync once each 2 days
-  setSyncProvider(syncTime);
-
-  Alarm.alarmRepeat(dowSunday, 9, 0, 0, ringAlarm);  // EBD início
-  Alarm.alarmRepeat(dowSunday, 11, 0, 0, ringAlarm);  // EBD final
-  Alarm.alarmRepeat(dowSunday, 11, 10, 0, ringAlarm);  // EBD final 2
-  Alarm.alarmRepeat(dowSunday, 18, 30, 0, ringAlarm);  // Domingo noite
-  Alarm.alarmRepeat(dowWednesday, 19, 30, 0, ringAlarm);  // Quarta
-
-  //Alarm.alarmRepeat(dowSunday, 13, 54, 30, ringAlarm);  // test
+  // so that we don't need to know esp's ip
+  MDNS.begin(HOSTNAME);
 }
 
 void loop() {
-  showTimeStatus();
-  Alarm.delay(DELAY_INTERVAL);
+  webServer.handleClient();
+  ntpClient.update();  // time sync
+  MDNS.update();  // hostname
+
+  // try reconnecting if not connected
+  if (!WiFi.isConnected() && !triedReconnection) {
+    Serial.println("Connection lost. Trying to reconnect...");
+    tryConnecting2WiFi();
+    setupServices();
+    triedReconnection = true;
+    timeLastReconnection = millis();
+  }
+
+  // econnection should be tried once each RECONNECTION_TIMEOUT milliseconds
+  if (triedReconnection) {
+    const uint64_t timeSinceReconnection = millis() - timeLastReconnection;
+    if (timeSinceReconnection > RECONNECTION_TIMEOUT)
+      triedReconnection = false;
+  }
 }
 
-// FUNCTIONS DEFINITIONS //
 
-void ringAlarm() {
-  if (t1meStatus == TIME_WRONG)
-    return;
 
-  digitalWrite(RELAY, true);
+bool saveWiFiConf() {
+  for (int i = 0; i < 12; i++) {
+    EEPROM.put(0, ssid[i]);
+    EEPROM.put(12, pass[i]);
+  }
 
-  Alarm.timerOnce(RING_DURATION, []() {
-    digitalWrite(RELAY, false);
-  });
+  return EEPROM.commit();
 }
 
-void showTimeStatus() {
-  int ticks2wait;
-  switch (t1meStatus) {
-    case TIME_OK:
-      digitalWrite(LED, HIGH);
+void loadWiFiConf() {
+  for (int i = 0; i < 12; i++) {
+    ssid[i] = EEPROM.read(i);
+    pass[i] = EEPROM.read(i + 12);
+  }
+}
+
+void tryConnecting2WiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, pass);
+
+  for (int t = 15; t > 0; t--) {  // 15 trials
+    delay(500);  // check if connected each half second
+    if (WiFi.isConnected()) {
+      Serial.print("Connected, IP: ");
+      Serial.println(WiFi.localIP());
       return;
-    case TIME_IMPRECISE:
-      ticks2wait = 2;
-      break;
-    case TIME_WRONG:
-      ticks2wait = 1;
-      break;
-  default:
-    break;
+    }
   }
 
-  // blink
-  static int ledTicks = 0;
+  triedReconnection = true;
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(HOSTNAME, "sinalconf", 1, false, 1);
 
-  if (++ledTicks == ticks2wait) {
-    static bool ledOn = false;
-
-    ledOn = !ledOn;
-    ledTicks = 0;
-    digitalWrite(LED, ledOn);
-  }
+  Serial.println("Not Connected, AP IP: ");
+  Serial.println(WiFi.softAPIP());
 }
 
-void failSafe() {
-  if (t1meStatus == TIME_OK)
-    t1meStatus = TIME_IMPRECISE;
-  else if (t1meStatus == TIME_IMPRECISE) {
-    if (++precisionLoss >= 5)
-      t1meStatus = TIME_WRONG;
-  }
+void setupServices() {
+  // setup web server
+  webServer.begin();
+  webServer.on("/", HTTP_GET, handleMainPage);
+  webServer.onNotFound(handlePageNotFound);
 
-  unixTime += SYNC_INTERVAL + 5;  // aproximation. Precission loss
+  // setup time client
+  ntpClient.begin();
+  ntpClient.setUpdateInterval(3600000);  // update each hour
+  ntpClient.setTimeOffset(-10800);  // UTC-3
 }
 
-time_t syncTime() {
-  if (WiFi.status() != WL_CONNECTED)
-    WiFi.begin(SSID, PASS);  // try once
+void handleMainPage() {
+  String message = R"STR(<html>
+<meta http-equiv='content-type' content='text/html; charset=utf-8'>
+<meta http-equiv='refresh' content='10'>)STR";
+  message += "<p>";
+  message += ntpClient.getFormattedTime();
+  message += "</p>";
+  message += "<p>";
+  message += WiFi.isConnected() ? "connected" : "not connected";
+  message += "</p>";
+  message += "</html>";
 
-  if (WiFi.status() != WL_CONNECTED) {
-    failSafe();
-    return unixTime;
-  }
+  webServer.send(200, "text/html", message);
+}
 
-  WiFiEspClient client;
-  client.setTimeout(5000);
-  client.connect("worldtimeapi.org", 80);
-  if (!client.connected()) {
-    failSafe();
-    return unixTime;
-  }
-
-  client.println("GET /api/timezone/America/Sao_Paulo HTTP/1.1");
-  client.println("Host: worldtimeapi.org");
-  client.println("Connection: close");
-  client.println();
-
-  // ignore everything before the value we care about
-  client.find((char *)"unixtime\":");
-
-  String unixTimeStr = client.readStringUntil(',');
-
-  precisionLoss = 0;
-  t1meStatus = TIME_OK;
-  unixTime = unixTimeStr.toInt() - 10800;
-
-  client.stop();
-
-  return unixTime;
+void handlePageNotFound() {
+  webServer.send(404, "text/html", "Página não encontrada");
 }
