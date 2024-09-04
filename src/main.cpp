@@ -10,25 +10,24 @@
 #include <WiFiUdp.h>
 
 #define HOSTNAME "sinal"
-#define RELAY 5
-#define LED   4
-#define UPDATE_INTERVAL 250
-#define RECONNECTION_TIMEOUT 300000  // 5 min
+#define RELAY 5  // D1
+#define LED   4  // D2
+#define RECONNECTION_TIMEOUT 300000  // 5 min (in milliseconds)
 
 // alarm stuff
 bool isAlarming = false;
 uint64_t alarmStart = 0;
 // in case it's not connected to a network
 bool triedReconnection = false;
-uint64_t timeLastReconnection = 0;
+uint64_t reconnectionStart = 0;
 // esp wifi connection config
 char ssid[17] = "Mefibosete24", pass[17] = "papito12345";
 // time sync
 WiFiUDP ntpUDP;
-NTPClient ntpClient(ntpUDP);
+NTPClient ntpClient(ntpUDP, -10800, 3600000);
 // web server
 ESP8266WebServer webServer(80);
-// page base head tags
+// page base
 String pageCommon = R"(
   <!DOCTYPE html>
   <html>
@@ -90,8 +89,6 @@ void setup() {
 
   // setup time client
   ntpClient.begin();
-  ntpClient.setUpdateInterval(3600000);  // update each hour
-  ntpClient.setTimeOffset(-10800);  // UTC-3
 
   // so that we don't need to know esp's ip
   MDNS.begin(HOSTNAME);
@@ -109,7 +106,7 @@ void loop() {
     Serial.println("No Connection. Trying to reconnect...");
     tryConnecting2WiFi();
     triedReconnection = true;
-    timeLastReconnection = millis();
+    reconnectionStart = millis();
     // force resync
     if (WiFi.isConnected())
       ntpClient.forceUpdate();
@@ -117,13 +114,9 @@ void loop() {
 
   // Reconnection should be tried once each RECONNECTION_TIMEOUT milliseconds
   if (triedReconnection) {
-    const uint64_t delta = millis() - timeLastReconnection;
-    if (delta > RECONNECTION_TIMEOUT)
+    if (millis() - reconnectionStart > RECONNECTION_TIMEOUT)
       triedReconnection = false;
   }
-
-  Serial.println(ntpClient.getFormattedTime());
-  delay(500);
 }
 
 
@@ -259,7 +252,6 @@ void handleSave() {
   String network = webServer.arg("ssid");  // Get value from the first text input
   String password = webServer.arg("pass");  // Get value from the second text input
 
-  Serial.println("/save");
   Serial.println("  new ssid: " + network);
   Serial.println("  new pass: " + password);
 
@@ -268,7 +260,8 @@ void handleSave() {
     EEPROM.put(12, pass[i]);
   }*/
 
-  if (EEPROM.commit())
+  if (EEPROM.commit()) {
+    Serial.println("/save Succeeded");
     webServer.send(200, "text/html", pageCommon + R"(
         <meta http-equiv='refresh' content='10; url=/'>
       </head>
@@ -278,7 +271,9 @@ void handleSave() {
       </body>
       </html>
     )");
-  else
+  }
+  else {
+    Serial.println("/save Failed");
     webServer.send(200, "text/html", pageCommon + R"(
       </head>
       <body>
@@ -286,6 +281,7 @@ void handleSave() {
       </body>
       </html>
     )");
+  }
 }
 
 void handleReboot() {
