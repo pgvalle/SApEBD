@@ -18,8 +18,7 @@
 bool isAlarming = false;
 uint64_t alarmStart = 0;
 // in case it's not connected to a network
-bool triedReconnection = false;
-uint64_t reconnectionStart = 0;
+uint64_t lastReconnectionEnd = 0;
 // esp wifi connection config
 char ssid[17] = "Mefibosete24", pass[17] = "papito12345";
 // time sync
@@ -90,7 +89,7 @@ void setup() {
   // setup time client
   ntpClient.begin();
 
-  // so that we don't need to know esp's ip
+  // Hostname domain so that we don't need to know esp's ip
   MDNS.begin(HOSTNAME);
 }
 
@@ -101,26 +100,30 @@ void loop() {
 
   try2Alarm();
 
-  // try reconnecting if not connected
-  if (!WiFi.isConnected() && !triedReconnection) {
-    Serial.println("No Connection. Trying to reconnect...");
-    tryConnecting2WiFi();
-    triedReconnection = true;
-    reconnectionStart = millis();
-    // force resync
-    if (WiFi.isConnected())
-      ntpClient.forceUpdate();
-  }
+  if (WiFi.isConnected())
+    lastReconnectionEnd = millis();
+  else {  // try reconnecting each RECONNECTION_TIMEOUT milliseconds
+    Serial.print("No Connection. Trying to reconnect in");
 
-  // Reconnection should be tried once each RECONNECTION_TIMEOUT milliseconds
-  if (triedReconnection) {
-    if (millis() - reconnectionStart > RECONNECTION_TIMEOUT)
-      triedReconnection = false;
+    const uint64_t delta = millis() - lastReconnectionEnd;
+    Serial.println(String(delta / 1000) + " seconds");
+
+    if (delta >= RECONNECTION_TIMEOUT) {
+      tryConnecting2WiFi();
+      lastReconnectionEnd = millis();
+      // force resync
+      if (WiFi.isConnected())
+        ntpClient.forceUpdate();
+    }
   }
 }
 
 
 bool checkDOWTime(int dow, int h, int m, int s) {
+  // if time not set, then don't ring
+  if (!ntpClient.isTimeSet())
+    return false;
+
   return ntpClient.getDay() == dow &&
          ntpClient.getHours() == h &&
          ntpClient.getMinutes() == m &&
@@ -188,7 +191,7 @@ void try2Alarm() {
 void tryConnecting2WiFi() {
   WiFi.begin(ssid, pass);
 
-  if (WiFi.waitForConnectResult(8000) == WL_CONNECTED)
+  if (WiFi.waitForConnectResult(10000) == WL_CONNECTED)
     Serial.println("Connected");
   else
     Serial.println("Not Connected");
@@ -263,7 +266,7 @@ void handleSave() {
   if (EEPROM.commit()) {
     Serial.println("/save Succeeded");
     webServer.send(200, "text/html", pageCommon + R"(
-        <meta http-equiv='refresh' content='10; url=/'>
+        <meta http-equiv='refresh' content='10; url=/reboot'>
       </head>
       <body>
         <h1>Configurações salvas</h1>
@@ -278,6 +281,9 @@ void handleSave() {
       </head>
       <body>
         <h1>Falha ao salvar configurações</h1>
+        <form action='/' method='GET'>
+          <button type='submit'>voltar</button>
+        </form>
       </body>
       </html>
     )");
@@ -285,8 +291,9 @@ void handleSave() {
 }
 
 void handleReboot() {
+  Serial.println("/reboot");
   webServer.send(200, "text/html", pageCommon + R"(
-      <meta http-equiv='refresh' content='10; url=/'>
+      <meta http-equiv='refresh' content='12; url=/'>
     </head>
     <body>
       <h1>Reiniciando...</h1>
@@ -294,7 +301,6 @@ void handleReboot() {
     </html>
   )");
 
-  Serial.println("/reboot");
   delay(1000);
   ESP.restart();  // Reboot the ESP8266
 }
