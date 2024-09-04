@@ -1,13 +1,11 @@
-// for storing wifi connection data
-#include <ESP_EEPROM.h>
 // wifi stuff
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 // webpage
 #include <ESP8266WebServer.h>
 // ntp client
-#include <NTPClient.h>
 #include <WiFiUdp.h>
+#include <NTPClient.h>
 
 #define HOSTNAME "sinal"
 #define RELAY 5  // D1
@@ -17,10 +15,6 @@
 // alarm stuff
 bool isAlarming = false;
 uint64_t alarmStart = 0;
-// in case it's not connected to a network
-uint64_t lastReconnectionEnd = 0;
-// esp wifi connection config
-char ssid[17] = "Mefibosete24", pass[17] = "papito12345";
 // time sync
 WiFiUDP ntpUDP;
 NTPClient ntpClient(ntpUDP, -10800, 3600000);
@@ -45,8 +39,6 @@ String pageCommon = R"(
 // alarm stuff
 bool checkDOWTime(int dow, int h, int m, int s);
 void try2Alarm();
-// wifi stuff
-void tryConnecting2WiFi();
 // Pages handlers
 void handleNotFound();
 void handleRoot();
@@ -61,22 +53,14 @@ void setup() {
   pinMode(RELAY, OUTPUT);
   pinMode(LED, OUTPUT);
 
-  const size_t memSize = sizeof(ssid) + sizeof(pass) - 2;
-  //EEPROM.begin(memSize);
-
+  // setup persistent wifi
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(true);
   WiFi.mode(WIFI_AP_STA);  // allow wifi connection and access point
   WiFi.softAP(HOSTNAME, "sinalconf", 1, false, 1);
+  WiFi.begin();
 
-  // load wifi config
-  /*for (int i = 0; i < 16; i++) {
-    ssid[i] = EEPROM.read(i);
-    pass[i] = EEPROM.read(i + 16);
-  }*/
-
-  Serial.println("  ssid: " + String(ssid));
-  Serial.println("  pass: " + String(pass));
-
-  tryConnecting2WiFi();
+  WiFi.waitForConnectResult(10000);
 
   // setup web server
   webServer.begin();
@@ -91,6 +75,8 @@ void setup() {
 
   // Hostname domain so that we don't need to know esp's ip
   MDNS.begin(HOSTNAME);
+
+  Serial.println("Setup done");
 }
 
 void loop() {
@@ -100,22 +86,10 @@ void loop() {
 
   try2Alarm();
 
-  if (WiFi.isConnected())
-    lastReconnectionEnd = millis();
-  else {  // try reconnecting each RECONNECTION_TIMEOUT milliseconds
-    Serial.print("No Connection. Trying to reconnect in");
+  if (!WiFi.isConnected())
+    Serial.println("No Connection");
 
-    const uint64_t delta = millis() - lastReconnectionEnd;
-    Serial.println(String(delta / 1000) + " seconds");
-
-    if (delta >= RECONNECTION_TIMEOUT) {
-      tryConnecting2WiFi();
-      lastReconnectionEnd = millis();
-      // force resync
-      if (WiFi.isConnected())
-        ntpClient.forceUpdate();
-    }
-  }
+  digitalWrite(LED, WiFi.isConnected());
 }
 
 
@@ -188,15 +162,6 @@ void try2Alarm() {
   }
 }
 
-void tryConnecting2WiFi() {
-  WiFi.begin(ssid, pass);
-
-  if (WiFi.waitForConnectResult(10000) == WL_CONNECTED)
-    Serial.println("Connected");
-  else
-    Serial.println("Not Connected");
-}
-
 void handleNotFound() {
   webServer.send(404, "text/html", pageCommon + R"(
     </head>
@@ -217,7 +182,7 @@ void handleRoot() {
     <body>
       <h1>Sinal Autônomo</h1>
       <form action='/save' method='GET'>
-        <input type='text' name='ssid' placeholder='Nova rede ()" + ssid + R"()'><br>
+        <input type='text' name='ssid' placeholder='Nova rede ()" + WiFi.SSID() + R"()'><br>
         <input type='password' name='pass' placeholder='Nova senha'><br>
         <button type='submit'>salvar</button>
       </form>
@@ -252,42 +217,28 @@ void handleRing() {
 }
 
 void handleSave() {
-  String network = webServer.arg("ssid");  // Get value from the first text input
-  String password = webServer.arg("pass");  // Get value from the second text input
+  String ssid = webServer.arg("ssid");  // Get value from the first text input
+  String pass = webServer.arg("pass");  // Get value from the second text input
 
-  Serial.println("  new ssid: " + network);
-  Serial.println("  new pass: " + password);
+  if (ssid.isEmpty())  // just changing the password
+    ssid = WiFi.SSID();
 
-  /*for (int i = 0; i < 12; i++) {
-    EEPROM.put(0, ssid[i]);
-    EEPROM.put(12, pass[i]);
-  }*/
+  Serial.println("/save");
+  webServer.send(200, "text/html", pageCommon + R"(
+    </head>
+    <body>
+      <h1>Configurações salvas</h1>
+      <p>Conecte seu dispositivo à nova rede ou à rede do sinal antes de prosseguir</p>
+      <form action='/' method='GET'>
+        <button type='submit'>pagina inicial</button>
+      </form>
+    </body>
+    </html>
+  )");
 
-  if (EEPROM.commit()) {
-    Serial.println("/save Succeeded");
-    webServer.send(200, "text/html", pageCommon + R"(
-        <meta http-equiv='refresh' content='10; url=/reboot'>
-      </head>
-      <body>
-        <h1>Configurações salvas</h1>
-        <p>Reiniciando em 10 segundos</p>
-      </body>
-      </html>
-    )");
-  }
-  else {
-    Serial.println("/save Failed");
-    webServer.send(200, "text/html", pageCommon + R"(
-      </head>
-      <body>
-        <h1>Falha ao salvar configurações</h1>
-        <form action='/' method='GET'>
-          <button type='submit'>voltar</button>
-        </form>
-      </body>
-      </html>
-    )");
-  }
+  delay(1000);
+  WiFi.begin(ssid, pass);
+  ESP.restart();  // Reboot the ESP8266
 }
 
 void handleReboot() {
@@ -296,7 +247,7 @@ void handleReboot() {
       <meta http-equiv='refresh' content='12; url=/'>
     </head>
     <body>
-      <h1>Reiniciando...</h1>
+      <h1>Reiniciando</h1>
     </body>
     </html>
   )");
