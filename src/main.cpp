@@ -10,14 +10,13 @@
 #define HOSTNAME "sinal"
 #define RELAY 5  // D1
 #define LED   4  // D2
-#define RECONNECTION_TIMEOUT 300000  // 5 min (in milliseconds)
 
 // alarm stuff
 bool isAlarming = false;
 uint64_t alarmStart = 0;
 // time sync
 WiFiUDP ntpUDP;
-NTPClient ntpClient(ntpUDP, -10800, 3600000);
+NTPClient ntpClient(ntpUDP, -10800, 3600000);  // UTC-3 (-10800), update each hour (3600000)
 // web server
 ESP8266WebServer webServer(80);
 // page base
@@ -27,8 +26,8 @@ String pageCommon = R"(
   <head>
     <style>
       body { font-family: Arial, sans-serif; text-align: center; }
-      button { padding: 10px 20px; margin: 10px; }
-      input { padding: 10px; margin: 10px; }
+      button { padding: 5px 10px; margin: 5px; }
+      input { padding: 5px; margin: 5px; }
     </style>
     <meta charset='UTF-8'>
     <meta http-equiv='X-UA-Compatible' content='IE=edge'>
@@ -60,7 +59,7 @@ void setup() {
   WiFi.softAP(HOSTNAME, "sinalconf", 1, false, 1);
   WiFi.begin();
 
-  WiFi.waitForConnectResult(10000);
+  WiFi.waitForConnectResult(8000);
 
   // setup web server
   webServer.begin();
@@ -86,9 +85,6 @@ void loop() {
 
   try2Alarm();
 
-  if (!WiFi.isConnected())
-    Serial.println("No Connection");
-
   digitalWrite(LED, WiFi.isConnected());
 }
 
@@ -98,10 +94,10 @@ bool checkDOWTime(int dow, int h, int m, int s) {
   if (!ntpClient.isTimeSet())
     return false;
 
+  const time_t givenDaySeconds = 3600 * h + 60 * m + s;
+  const time_t realDaySeconds = ntpClient.getEpochTime() % 86400L;
   return ntpClient.getDay() == dow &&
-         ntpClient.getHours() == h &&
-         ntpClient.getMinutes() == m &&
-         ntpClient.getSeconds() == s;
+         abs(givenDaySeconds - realDaySeconds) <= 2;
 }
 
 void try2Alarm() {
@@ -163,6 +159,7 @@ void try2Alarm() {
 }
 
 void handleNotFound() {
+  Serial.println("Not found");
   webServer.send(404, "text/html", pageCommon + R"(
     </head>
     <body>
@@ -182,7 +179,7 @@ void handleRoot() {
     <body>
       <h1>Sinal Autônomo</h1>
       <form action='/save' method='GET'>
-        <input type='text' name='ssid' placeholder='Nova rede ()" + WiFi.SSID() + R"()'><br>
+        <input type='text' name='ssid' placeholder=')" + WiFi.SSID() + R"('><br>
         <input type='password' name='pass' placeholder='Nova senha'><br>
         <button type='submit'>salvar</button>
       </form>
@@ -198,6 +195,8 @@ void handleRoot() {
 }
 
 void handleRing() {
+  Serial.println("/ring");
+
   // only alarm now if not alarming
   if (!isAlarming) {
     digitalWrite(RELAY, HIGH);
@@ -205,26 +204,57 @@ void handleRing() {
     alarmStart = millis();
   }
 
-  Serial.println("/ring");
   webServer.send(200, "text/html", pageCommon + R"(
       <meta http-equiv='refresh' content='5; url=/'>
     </head>
     <body>
       <h1>Tocando</h1>
+      <p>...</p>
     </body>
     </html>
   )");
 }
 
 void handleSave() {
+  Serial.println("/save");
+
   String ssid = webServer.arg("ssid");  // Get value from the first text input
   String pass = webServer.arg("pass");  // Get value from the second text input
 
-  if (ssid.isEmpty())  // just changing the password
+  if (ssid == "" && pass == "") {  // both empty fields not expected
+    webServer.send(200, "text/html", pageCommon + R"(
+        <script>
+          window.onload = function () {
+            const navType = performance.navigation.type
+            if (navType === 1 || navType === 2)
+              window.location.replace('/')
+          }
+        </script>
+      </head>
+      <body>
+        <h1>???</h1>
+        <p>Você tentou salvar uma rede sem nome e sem senha.</p>
+        <form action='/' method='GET'>
+          <button type='submit'>pagina inicial</button>
+        </form>
+      </body>
+      </html>
+    )");
+
+    return;
+  }
+
+  if (ssid == "")  // just changing the password, so ssid keeps the same
     ssid = WiFi.SSID();
 
-  Serial.println("/save");
   webServer.send(200, "text/html", pageCommon + R"(
+      <script>
+        window.onload = function () {
+          const navType = performance.navigation.type
+          if (navType === 1 || navType === 2)
+            window.location.replace('/')
+        }
+      </script>
     </head>
     <body>
       <h1>Configurações salvas</h1>
@@ -236,22 +266,22 @@ void handleSave() {
     </html>
   )");
 
-  delay(1000);
+  delay(2000);
   WiFi.begin(ssid, pass);
-  ESP.restart();  // Reboot the ESP8266
 }
 
 void handleReboot() {
   Serial.println("/reboot");
   webServer.send(200, "text/html", pageCommon + R"(
-      <meta http-equiv='refresh' content='12; url=/'>
+      <meta http-equiv='refresh' content='10; url=/'>
     </head>
     <body>
       <h1>Reiniciando</h1>
+      <p>...</p>
     </body>
     </html>
   )");
 
-  delay(1000);
+  delay(2000);
   ESP.restart();  // Reboot the ESP8266
 }
