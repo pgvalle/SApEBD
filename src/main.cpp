@@ -19,15 +19,34 @@ WiFiUDP ntpUDP;
 NTPClient ntpClient(ntpUDP, -10800, 3600000);  // UTC-3 (-10800), update each hour (3600000)
 // web server
 ESP8266WebServer webServer(80);
-// page base
+// common stuff for all subpages
 String pageCommon = R"(
   <!DOCTYPE html>
   <html>
   <head>
+    <script>
+      window.onload = function () {
+        const navType = performance.navigation.type
+        if (navType === 1 || navType === 2)
+          window.location.replace('/')
+      }
+    </script>
     <style>
       body { font-family: Arial, sans-serif; text-align: center; }
+      p { margin: 10px 0px 5px; }
       button { padding: 5px 10px; margin: 5px; }
       input { padding: 5px; margin: 5px; }
+      .form-container {
+        background-color: #d0d0d0;
+        padding: 0px 15px;
+        display: inline-block; margin: 5px
+      }
+      .button-group {
+        display: flex;
+        justify-content: center;
+        margin-top: 10px;
+        margin: 0 5px;
+      }
     </style>
     <meta charset='UTF-8'>
     <meta http-equiv='X-UA-Compatible' content='IE=edge'>
@@ -71,7 +90,6 @@ void setup() {
 
   // setup time client
   ntpClient.begin();
-
   // Hostname domain so that we don't need to know esp's ip
   MDNS.begin(HOSTNAME);
 
@@ -178,17 +196,20 @@ void handleRoot() {
     </head>
     <body>
       <h1>Sinal Autônomo</h1>
-      <form action='/save' method='GET'>
-        <input type='text' name='ssid' placeholder=')" + WiFi.SSID() + R"('><br>
-        <input type='password' name='pass' placeholder='Nova senha'><br>
+      <form class='form-container' action='/save' method='GET'>
+        <p>Configure uma nova rede<p>
+        <input type='text' name='ssid' placeholder=')" + WiFi.SSID() + R"( (atual)'><br>
+        <input type='password' name='pass' placeholder='senha'><br>
         <button type='submit'>salvar</button>
       </form>
-      <form action='/ring' method='GET'>
-        <button type='submit'>tocar (5s)</button>
-      </form>
-      <form action='/reboot' method='GET'>
-        <button type='submit'>reiniciar</button>
-      </form>
+      <div class='button-group'>
+        <form action='/ring' method='GET'>
+          <button type='submit'>tocar 5s</button>
+        </form>
+        <form action='/reboot' method='GET'>
+          <button type='submit'>reiniciar</button>
+        </form>
+      </div>
     </body>
     </html>
   )");
@@ -223,17 +244,10 @@ void handleSave() {
 
   if (ssid == "" && pass == "") {  // both empty fields not expected
     webServer.send(200, "text/html", pageCommon + R"(
-        <script>
-          window.onload = function () {
-            const navType = performance.navigation.type
-            if (navType === 1 || navType === 2)
-              window.location.replace('/')
-          }
-        </script>
       </head>
       <body>
         <h1>???</h1>
-        <p>Você tentou salvar uma rede sem nome e sem senha.</p>
+        <p>Você tentou salvar uma rede sem nome e sem senha</p>
         <form action='/' method='GET'>
           <button type='submit'>pagina inicial</button>
         </form>
@@ -248,13 +262,6 @@ void handleSave() {
     ssid = WiFi.SSID();
 
   webServer.send(200, "text/html", pageCommon + R"(
-      <script>
-        window.onload = function () {
-          const navType = performance.navigation.type
-          if (navType === 1 || navType === 2)
-            window.location.replace('/')
-        }
-      </script>
     </head>
     <body>
       <h1>Configurações salvas</h1>
