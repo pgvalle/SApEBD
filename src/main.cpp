@@ -8,8 +8,8 @@
 #include <NTPClient.h>
 
 #define HOSTNAME "sinal"
-#define RELAY 5  // D1
-#define LED   4  // D2
+#define RELAY 15 // D1
+#define LED   13 // D2
 
 // alarm stuff
 bool isAlarming = false;
@@ -62,14 +62,15 @@ void handleNotFound();
 void handleRoot();
 void handleRing();
 void handleSave();
-void handleReboot();
 
 
 void setup() {
-  Serial.begin(9600);
-
   pinMode(RELAY, OUTPUT);
+  digitalWrite(RELAY, LOW);
   pinMode(LED, OUTPUT);
+  digitalWrite(LED, LOW);
+  
+  Serial.begin(9600);
 
   // setup persistent wifi
   WiFi.setAutoReconnect(true);
@@ -86,7 +87,6 @@ void setup() {
   webServer.on("/", HTTP_GET, handleRoot);
   webServer.on("/ring", HTTP_GET, handleRing);
   webServer.on("/save", HTTP_GET, handleSave);
-  webServer.on("/reboot", HTTP_GET, handleReboot);
 
   // setup time client
   ntpClient.begin();
@@ -206,9 +206,6 @@ void handleRoot() {
         <form action='/ring' method='GET'>
           <button type='submit'>tocar 5s</button>
         </form>
-        <form action='/reboot' method='GET'>
-          <button type='submit'>reiniciar</button>
-        </form>
       </div>
     </body>
     </html>
@@ -275,20 +272,4 @@ void handleSave() {
 
   delay(2000);
   WiFi.begin(ssid, pass);
-}
-
-void handleReboot() {
-  Serial.println("/reboot");
-  webServer.send(200, "text/html", pageCommon + R"(
-      <meta http-equiv='refresh' content='10; url=/'>
-    </head>
-    <body>
-      <h1>Reiniciando</h1>
-      <p>...</p>
-    </body>
-    </html>
-  )");
-
-  delay(2000);
-  ESP.restart();  // Reboot the ESP8266
 }
