@@ -16,7 +16,7 @@ bool isAlarming = false;
 uint64_t alarmStart = 0;
 // time sync
 WiFiUDP ntpUDP;
-NTPClient ntpClient(ntpUDP, -10800, 3600000);  // UTC-3 (-10800), update each hour (3600000)
+NTPClient ntpClient(ntpUDP);  // UTC-3 (-10800), update each minute (60000)
 // web server
 ESP8266WebServer webServer(80);
 // common stuff for all subpages
@@ -55,8 +55,7 @@ String pageCommon = R"(
 )";
 
 // alarm stuff
-bool checkDOWTime(int dow, int h, int m, int s);
-void try2Alarm();
+void try2Alarm(int dow, int h, int m, int s);
 // Pages handlers
 void handleNotFound();
 void handleRoot();
@@ -89,6 +88,7 @@ void setup() {
   webServer.on("/save", HTTP_GET, handleSave);
 
   // setup time client
+  ntpClient.setTimeOffset(-10800);
   ntpClient.begin();
   // Hostname domain so that we don't need to know esp's ip
   MDNS.begin(HOSTNAME);
@@ -101,83 +101,40 @@ void loop() {
   ntpClient.update();  // time sync
   MDNS.update();  // hostname
 
-  try2Alarm();
+  const uint64_t timeAlarming = millis() - alarmStart;
+  if (isAlarming && timeAlarming >= 5000) {
+    digitalWrite(RELAY, LOW);
+    isAlarming = false;
+  }
+  else if (!isAlarming) {
+    try2Alarm(0, 9, 0, 0);
+    try2Alarm(0, 10, 50, 0);
+    try2Alarm(0, 11, 0, 0);
+    try2Alarm(0, 18, 30, 0);
+    try2Alarm(4, 19, 30, 0);
+  }
 
   digitalWrite(LED, WiFi.isConnected());
 }
 
 
-bool checkDOWTime(int dow, int h, int m, int s) {
-  // if time not set, then don't ring
-  if (!ntpClient.isTimeSet())
-    return false;
+void try2Alarm(int dow, int h, int m, int s) {
+  const bool match = ntpClient.isTimeSet() &&
+      ntpClient.getDay() == dow &&
+      ntpClient.getHours() == h &&
+      ntpClient.getMinutes() == m &&
+      ntpClient.getSeconds() == s;
 
-  const time_t givenDaySeconds = 3600 * h + 60 * m + s;
-  const time_t realDaySeconds = ntpClient.getEpochTime() % 86400L;
-  return ntpClient.getDay() == dow &&
-         abs(givenDaySeconds - realDaySeconds) <= 2;
-}
-
-void try2Alarm() {
-  if (isAlarming) {
-    if (millis() - alarmStart >= 5000) {  // 5 seconds alarming
-      digitalWrite(RELAY, LOW);
-      isAlarming = false;
-    }
-    return;
-  }
-
-  // 9:00:00  // inicie ebd
-  // 10:55:00  // ebd final 1
-  // 11:05:00  // ebd final 2
-  // 11:15:00  // ebd final 3
-  // 18:30:00 // domingo noite
-  // 19:30:00 // quarta
-  if (checkDOWTime(0, 9, 0, 0)) {
+  if (match) {
     digitalWrite(RELAY, HIGH);
     isAlarming = true;
     alarmStart = millis();
-    return;
-  }
-
-  if (checkDOWTime(0, 10, 55, 0)) {
-    digitalWrite(RELAY, HIGH);
-    isAlarming = true;
-    alarmStart = millis();
-    return;
-  }
-
-  if (checkDOWTime(0, 11, 05, 0)) {
-    digitalWrite(RELAY, HIGH);
-    isAlarming = true;
-    alarmStart = millis();
-    return;
-  }
-
-  if (checkDOWTime(0, 11, 15, 0)) {
-    digitalWrite(RELAY, HIGH);
-    isAlarming = true;
-    alarmStart = millis();
-    return;
-  }
-
-  if (checkDOWTime(0, 18, 30, 0)) {
-    digitalWrite(RELAY, HIGH);
-    isAlarming = true;
-    alarmStart = millis();
-    return;
-  }
-
-  if (checkDOWTime(3, 19, 30, 0)) {
-    digitalWrite(RELAY, HIGH);
-    isAlarming = true;
-    alarmStart = millis();
-    return;
   }
 }
 
 void handleNotFound() {
   Serial.println("Not found");
+
   webServer.send(404, "text/html", pageCommon + R"(
     </head>
     <body>
@@ -192,6 +149,7 @@ void handleNotFound() {
 
 void handleRoot() {
   Serial.println("/");
+
   webServer.send(200, "text/html", pageCommon + R"(
     </head>
     <body>
@@ -251,25 +209,24 @@ void handleSave() {
       </body>
       </html>
     )");
-
-    return;
   }
+  else {
+    if (ssid == "")  // just changing the password, so ssid keeps the same
+      ssid = WiFi.SSID();
 
-  if (ssid == "")  // just changing the password, so ssid keeps the same
-    ssid = WiFi.SSID();
+    webServer.send(200, "text/html", pageCommon + R"(
+      </head>
+      <body>
+        <h1>Configurações salvas</h1>
+        <p>Conecte seu dispositivo à nova rede ou à rede do sinal antes de prosseguir</p>
+        <form action='/' method='GET'>
+          <button type='submit'>pagina inicial</button>
+        </form>
+      </body>
+      </html>
+    )");
 
-  webServer.send(200, "text/html", pageCommon + R"(
-    </head>
-    <body>
-      <h1>Configurações salvas</h1>
-      <p>Conecte seu dispositivo à nova rede ou à rede do sinal antes de prosseguir</p>
-      <form action='/' method='GET'>
-        <button type='submit'>pagina inicial</button>
-      </form>
-    </body>
-    </html>
-  )");
-
-  delay(2000);
-  WiFi.begin(ssid, pass);
+    delay(2000);
+    WiFi.begin(ssid, pass);
+  }
 }
